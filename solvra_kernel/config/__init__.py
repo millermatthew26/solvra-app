@@ -1,0 +1,1 @@
+"""Solvra Kernel — Configuration package."""
