@@ -1,7 +1,7 @@
 """
-Solvra — Personal Health Intelligence
+Shilu — Personal Health Intelligence
 ========================================
-Streamlit interface for the Solvra Kernel v2.
+Streamlit interface for the Shilu Kernel v2.
 
 Run locally:
     streamlit run app.py
@@ -9,9 +9,11 @@ Run locally:
 Sections:
     1. Log Data       — enter today's health measurements
     2. My Baselines   — personal baseline per signal with uncertainty
-    3. Trends         — Plotly charts showing trajectory over time
+    3. Trends         — charts showing trajectory over time
     4. Signals        — active findings, alerts, and context notes
     5. My Twin        — digital twin phase status across all signals
+    6. Habits         — lifestyle context and habit experiments
+    7. About Shilu    — what this system is and is not
 """
 
 import sys
@@ -23,20 +25,20 @@ from datetime import datetime, timedelta
 from typing import Optional
 import plotly.graph_objects as go
 
-from solvra_kernel.core.kernel import SolvraKernel
-from solvra_kernel.models.entities import (
+from shilu_kernel.core.kernel import SolvraKernel
+from shilu_kernel.models.entities import (
     SIGNAL_DEFINITIONS, UncertaintyLevel, AlertSeverity,
-    DigitalTwinPhase, RiskBand
+    RiskBand
 )
 from storage import SupabaseStore
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title    = "Solvra",
-    page_icon     = "🧬",
-    layout        = "wide",
-    initial_sidebar_state = "expanded",
+    page_title="Shilu",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ── STYLES ────────────────────────────────────────────────────────────────────
@@ -53,7 +55,7 @@ st.markdown("""
     }
     .metric-card {
         background: #F0F6FF; border-radius: 8px;
-        padding: 1rem; border-left: 4px solid #2E75B6;
+        padding: 1rem; border-left: 4px solid #2ECC71;
         margin-bottom: 0.5rem;
     }
     .alert-urgent {
@@ -80,6 +82,14 @@ st.markdown("""
     .uncertainty-medium { color: #BF6900; font-weight: 600; }
     .uncertainty-low    { color: #1F6B3A; font-weight: 600; }
     .section-divider { margin: 1.5rem 0; border-top: 2px solid #E0E0E0; }
+    .stButton > button[kind="primary"] {
+        background-color: #2ECC71;
+        border-color: #2ECC71;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #27AE60;
+        border-color: #27AE60;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -96,16 +106,14 @@ def get_store() -> SupabaseStore:
     return st.session_state.store
 
 def get_onboarded() -> bool:
-    """Returns True if the user has passed the welcome screen."""
     return st.session_state.get("onboarded", False)
 
 def get_user_id() -> str:
-    """For prototype: simple session user ID. Replace with auth in production."""
     if "user_id" not in st.session_state:
         st.session_state.user_id = "demo_user"
     return st.session_state.user_id
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# ── SIGNAL DEFINITIONS ────────────────────────────────────────────────────────
 
 SIGNAL_LABELS = {
     "bp_systolic":   ("Systolic BP", "mmHg", 60.0, 200.0, 120.0),
@@ -118,8 +126,6 @@ SIGNAL_LABELS = {
     "activity_mins": ("Activity", "minutes", 0.0, 300.0, 30.0),
     "stress_level":  ("Stress Level", "1-5", 1.0, 5.0, 3.0),
     "glucose":       ("Fasting Glucose (optional — from blood test or glucometer)", "mg/dL", 50.0, 400.0, 95.0),
-
-    # v0.2 signals
     "body_temp":     ("Body Temperature", "°F", 95.0, 105.0, 98.6),
     "spo2":          ("Oxygen Saturation (SpO2)", "%", 70.0, 100.0, 98.0),
     "hrv":           ("Heart Rate Variability (optional — wearable)", "ms", 0.0, 250.0, 50.0),
@@ -137,13 +143,11 @@ SIGNAL_HELP = {
     "activity_mins": "Minutes of intentional physical activity today — walking, exercise, sport, anything that raised your heart rate. A 20-minute walk counts. Incidental movement like housework does not.",
     "stress_level":  "Your overall stress level today on a scale of 1 (very low) to 5 (very high). Rate your average across the day, not just the worst moment.",
     "energy_level":  "How energetic you felt today on a scale of 1 (exhausted) to 5 (full energy). Rate your overall level across the day, not just right now.",
-    "glucose":       "Fasting blood glucose in mg/dL. This requires either a home glucometer (a small device that tests a drop of blood from your fingertip) or a recent lab result from your doctor. Only log when you have an actual reading — do not estimate.",
-    "body_temp":     "Your resting body temperature in Fahrenheit. Use an oral thermometer when you are not exercising or ill for your baseline. Note: temperature is most useful for detecting changes from your personal normal.",
-    "spo2":          "Blood oxygen saturation — the percentage of your red blood cells carrying oxygen. Measured with a pulse oximeter, a small clip device that fits on your fingertip. Available at pharmacies for under 0, or captured by Apple Watch, Garmin, and similar wearables.",
-    "hrv":           "Heart Rate Variability — the variation in time between heartbeats in milliseconds. A higher HRV generally indicates better recovery and cardiovascular health. Requires a wearable device: Apple Watch, Garmin, Whoop, Oura Ring, or Polar chest strap. Find it in your device's companion app — look for HRV, recovery score, or readiness score.",
+    "glucose":       "Fasting blood glucose in mg/dL. This requires either a home glucometer or a recent lab result from your doctor. Only log when you have an actual reading — do not estimate.",
+    "body_temp":     "Your resting body temperature in Fahrenheit. Use an oral thermometer when you are not exercising or ill for your baseline. Temperature is most useful for detecting changes from your personal normal.",
+    "spo2":          "Blood oxygen saturation — the percentage of your red blood cells carrying oxygen. Measured with a pulse oximeter, a small clip device that fits on your fingertip. Available at pharmacies, or captured by Apple Watch, Garmin, and similar wearables.",
+    "hrv":           "Heart Rate Variability — the variation in time between heartbeats in milliseconds. A higher HRV generally indicates better recovery and cardiovascular health. Requires a wearable device: Apple Watch, Garmin, Whoop, Oura Ring, or Polar chest strap.",
 }
-
-# ── HABITS DATA ──────────────────────────────────────────────────────────────
 
 ONGOING_HABITS = {
     "smoking":        ("Smoking", "🚬", "Do you currently smoke cigarettes, cigars, or a pipe?"),
@@ -173,19 +177,18 @@ UNCERTAINTY_COLOR = {
     UncertaintyLevel.LOW:    ("#1F6B3A", "🟢"),
 }
 
-TWIN_PHASE_LABELS = {
-    DigitalTwinPhase.PHASE_1_PERSONAL_RECORD:  ("Phase 1 — Personal Record",  "📋"),
-    DigitalTwinPhase.PHASE_2_BASELINE_MODEL:   ("Phase 2 — Baseline Model",   "📊"),
-    DigitalTwinPhase.PHASE_3_TRAJECTORY_MODEL: ("Phase 3 — Trajectory Model", "📈"),
-    DigitalTwinPhase.PHASE_4_CORRELATION:      ("Phase 4 — Correlation",      "🔗"),
-    DigitalTwinPhase.PHASE_5_SIMULATION:       ("Phase 5 — Simulation",       "🧬"),
-}
+# Digital twin phases — derived from measurement counts per signal
+TWIN_PHASE_LABELS = [
+    ("Phase 1 — Personal Record",  "📋", 1),
+    ("Phase 2 — Baseline Model",   "📊", 14),
+    ("Phase 3 — Trajectory Model", "📈", 30),
+    ("Phase 4 — Correlation",      "🔗", 90),
+    ("Phase 5 — Simulation",       "🧬", 365),
+]
 
 def load_measurements_into_kernel(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
-    """Load persisted measurements from storage back into the kernel's ingestion store."""
     measurements = store.load_measurements(user_id)
     for m in measurements:
-        # Re-ingest into kernel memory without re-saving
         kernel.ingestion._store.setdefault(user_id, {}).setdefault(m.signal_id, [])
         existing_ids = {x.id for x in kernel.ingestion._store[user_id][m.signal_id]}
         if m.id not in existing_ids:
@@ -195,83 +198,51 @@ def uncertainty_badge(level: UncertaintyLevel) -> str:
     color, icon = UNCERTAINTY_COLOR.get(level, ("#555", "⚪"))
     return f"{icon} {level.value.replace('_', ' ').title()}"
 
-# ── WELCOME SCREEN ───────────────────────────────────────────────────────────
+# ── WELCOME SCREEN ────────────────────────────────────────────────────────────
 
 def render_welcome():
-    """Full-screen welcome experience shown on first open."""
-
-    # Hide the sidebar on the welcome screen
     st.markdown("""
     <style>
         [data-testid="stSidebar"] { display: none; }
-        .welcome-hero {
-            text-align: center;
-            padding: 3rem 2rem 1rem 2rem;
-        }
+        .welcome-hero { text-align: center; padding: 3rem 2rem 1rem 2rem; }
         .welcome-title {
-            font-size: 4rem;
-            font-weight: 900;
-            color: #1B3A5C;
-            letter-spacing: -1px;
-            margin-bottom: 0.25rem;
+            font-size: 4rem; font-weight: 900;
+            color: #1A1A1A; letter-spacing: -1px; margin-bottom: 0.25rem;
         }
+        .welcome-title span.dot { color: #2ECC71; }
         .welcome-tagline {
-            font-size: 1.4rem;
-            color: #2E75B6;
-            font-style: italic;
-            margin-bottom: 2.5rem;
+            font-size: 1.4rem; color: #2ECC71;
+            font-style: italic; margin-bottom: 2.5rem;
         }
         .welcome-body {
-            font-size: 1.05rem;
-            color: #333;
-            line-height: 1.8;
-            max-width: 680px;
-            margin: 0 auto;
+            font-size: 1.05rem; color: #333;
+            line-height: 1.8; max-width: 680px; margin: 0 auto;
         }
         .pillar-card {
-            background: #F0F6FF;
-            border-radius: 12px;
-            padding: 1.2rem 1.5rem;
-            border-left: 5px solid #2E75B6;
-            margin-bottom: 1rem;
-            text-align: left;
+            background: #F0F6FF; border-radius: 12px;
+            padding: 1.2rem 1.5rem; border-left: 5px solid #2ECC71;
+            margin-bottom: 1rem; text-align: left;
         }
-        .pillar-title {
-            font-weight: 700;
-            color: #1B3A5C;
-            font-size: 1rem;
-            margin-bottom: 0.3rem;
-        }
-        .pillar-body {
-            color: #444;
-            font-size: 0.95rem;
-            line-height: 1.6;
-        }
-        .welcome-disclaimer {
-            font-size: 0.8rem;
-            color: #999;
-            margin-top: 1.5rem;
-            font-style: italic;
-        }
+        .pillar-title { font-weight: 700; color: #1B3A5C; font-size: 1rem; margin-bottom: 0.3rem; }
+        .pillar-body { color: #444; font-size: 0.95rem; line-height: 1.6; }
+        .welcome-disclaimer { font-size: 0.8rem; color: #999; margin-top: 1.5rem; font-style: italic; }
     </style>
     """, unsafe_allow_html=True)
 
-    # Hero
     st.markdown("""
     <div class="welcome-hero">
-        <div class="welcome-title">🧬 Solvra</div>
+        <div class="welcome-title">Sh<span class="dot">i</span>lu</div>
         <div class="welcome-tagline">Your personal health intelligence — for life.</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Opening statement
     _, center, _ = st.columns([1, 3, 1])
     with center:
         st.markdown("""
         <div class="welcome-body">
             Most health systems see you once a year, compare you to population averages,
             and hand you a number that means nothing without context.<br><br>
-            <strong>Solvra is different.</strong> It builds a picture of <em>you</em> — your personal
+            <strong>Shilu is different.</strong> It builds a picture of <em>you</em> — your personal
             baselines, your patterns, your trajectory. Not what a 45-year-old looks like on average.
             What <em>you</em> look like when you are at your normal.<br><br>
             Over time, it learns what is stable, what is drifting, and what matters for your body
@@ -285,21 +256,21 @@ def render_welcome():
         """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("### Three things Solvra promises you")
+        st.markdown("### Three things Shilu promises you")
 
         st.markdown("""
         <div class="pillar-card">
             <div class="pillar-title">🔒 Your data belongs to you. Always.</div>
             <div class="pillar-body">
                 Everything you log is yours. You can export it, take it with you, or delete it at any time.
-                Solvra will never sell it, share it, or use it for anything other than building your
+                Shilu will never sell it, share it, or use it for anything other than building your
                 personal health picture. Your notes are private. Your record is portable.
             </div>
         </div>
         <div class="pillar-card">
             <div class="pillar-title">🛡️ Safety comes before everything else.</div>
             <div class="pillar-body">
-                If your data shows something that warrants attention, Solvra will tell you clearly —
+                If your data shows something that warrants attention, Shilu will tell you clearly —
                 and it will never let that alert be hidden or ignored. It will also always tell you
                 what it does not know yet, and it will never pretend to be more certain than it is.
             </div>
@@ -307,7 +278,7 @@ def render_welcome():
         <div class="pillar-card">
             <div class="pillar-title">🔍 You can always see why.</div>
             <div class="pillar-body">
-                Every insight Solvra surfaces comes with an explanation — what data it is based on,
+                Every insight Shilu surfaces comes with an explanation — what data it is based on,
                 how confident the system is, and what would make the picture clearer. No black box.
                 No confident claims without evidence. Just honest intelligence you can actually use.
             </div>
@@ -328,13 +299,13 @@ def render_welcome():
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("→  Enter Solvra", use_container_width=True, type="primary"):
+            if st.button("→  Enter Shilu", use_container_width=True, type="primary"):
                 st.session_state.onboarded = True
                 st.rerun()
 
         st.markdown("""
         <div class="welcome-disclaimer" style="text-align:center;">
-            Solvra is not a medical device and does not diagnose or treat any condition.
+            Shilu is not a medical device and does not diagnose or treat any condition.
             All outputs are for personal awareness only. Always consult a qualified healthcare
             provider for medical decisions.
         </div>
@@ -344,7 +315,7 @@ def render_welcome():
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 
 def render_sidebar(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
-    st.sidebar.markdown("## 🧬 Solvra")
+    st.sidebar.markdown("## 🌿 Shilu")
     st.sidebar.markdown("*Personal Health Intelligence*")
     st.sidebar.markdown("---")
 
@@ -357,13 +328,13 @@ def render_sidebar(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     st.sidebar.markdown("**Navigation**")
     page = st.sidebar.radio(
         "Go to",
-        ["📥 Log Data", "📊 My Baselines", "📈 Trends", "🔔 Signals & Alerts", "🧬 My Twin", "🌱 Habits", "ℹ️ About Solvra"],
+        ["📥 Log Data", "📊 My Baselines", "📈 Trends", "🔔 Signals & Alerts", "🧬 My Twin", "🌱 Habits", "ℹ️ About Shilu"],
         label_visibility="collapsed"
     )
 
     st.sidebar.markdown("---")
     st.sidebar.caption(
-        "Solvra is not a medical device. It does not diagnose, "
+        "Shilu is not a medical device. It does not diagnose, "
         "treat, or replace clinical care. All outputs are for "
         "personal awareness only."
     )
@@ -383,63 +354,147 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
         "logged when you have a recent lab result or glucometer reading."
     )
 
-    col1, col2 = st.columns(2)
+    # Age dropdown
+    st.markdown("**👤 Your Age**")
+    age_col1, age_col2 = st.columns([1, 3])
+    with age_col1:
+        age = st.selectbox(
+            "Age",
+            options=list(range(18, 101)),
+            index=12,
+            label_visibility="collapsed",
+            help="Your age helps Shilu apply the correct reference ranges for your signals."
+        )
+    with age_col2:
+        st.markdown(
+            f"<div style='padding-top:8px; color:#555; font-size:0.9rem;'>"
+            f"Age <strong>{age}</strong> — reference ranges and safety thresholds will be calibrated for you.</div>",
+            unsafe_allow_html=True
+        )
 
-    signals_left  = ["bp_systolic", "bp_diastolic", "heart_rate", "weight", "waist_circ", "spo2", "body_temp"]
-    signals_right = ["sleep_hours", "sleep_quality", "activity_mins", "stress_level", "energy_level", "hrv", "glucose"]
-
+    st.divider()
     values = {}
 
+    # ── CARDIOVASCULAR ────────────────────────────────────────────────────────
+    st.markdown("**❤️ Cardiovascular**")
+    st.caption("Blood pressure, heart rate, oxygen saturation, and HRV.")
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("**Cardiovascular & Metabolic**")
-        for sig in signals_left:
+        for sig in ["bp_systolic", "bp_diastolic"]:
             label, unit, mn, mx, default = SIGNAL_LABELS[sig]
-            help_text = SIGNAL_HELP.get(sig, "")
-            if sig in ["sleep_quality", "stress_level", "energy_level"]:
-                val = st.slider(f"{label} ({unit})", min_value=int(mn), max_value=int(mx), value=int(default), key=f"input_{sig}", help=help_text)
-            else:
-                val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=default, step=0.1, key=f"input_{sig}", help=help_text)
+            val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key=f"input_{sig}", help=SIGNAL_HELP.get(sig, ""))
             values[sig] = (val, unit)
-
     with col2:
-        st.markdown("**Sleep, Activity & Stress**")
-        for sig in signals_right:
+        for sig in ["heart_rate", "spo2"]:
             label, unit, mn, mx, default = SIGNAL_LABELS[sig]
-            help_text = SIGNAL_HELP.get(sig, "")
-            if sig in ["sleep_quality", "stress_level", "energy_level"]:
-                val = st.slider(f"{label} ({unit})", min_value=int(mn), max_value=int(mx), value=int(default), key=f"input_{sig}", help=help_text)
-            else:
-                val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=default, step=0.1, key=f"input_{sig}", help=help_text)
+            val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key=f"input_{sig}", help=SIGNAL_HELP.get(sig, ""))
             values[sig] = (val, unit)
+    with col3:
+        label, unit, mn, mx, default = SIGNAL_LABELS["hrv"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_hrv", help=SIGNAL_HELP.get("hrv", ""))
+        values["hrv"] = (val, unit)
 
-    st.markdown("---")
+    st.divider()
+
+    # ── BODY ──────────────────────────────────────────────────────────────────
+    st.markdown("**⚖️ Body**")
+    st.caption("Weight, waist circumference, and body temperature.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        label, unit, mn, mx, default = SIGNAL_LABELS["weight"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_weight", help=SIGNAL_HELP.get("weight", ""))
+        values["weight"] = (val, unit)
+    with col2:
+        label, unit, mn, mx, default = SIGNAL_LABELS["waist_circ"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_waist_circ", help=SIGNAL_HELP.get("waist_circ", ""))
+        values["waist_circ"] = (val, unit)
+    with col3:
+        label, unit, mn, mx, default = SIGNAL_LABELS["body_temp"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_body_temp", help=SIGNAL_HELP.get("body_temp", ""))
+        values["body_temp"] = (val, unit)
+
+    st.divider()
+
+    # ── SLEEP ─────────────────────────────────────────────────────────────────
+    st.markdown("**😴 Sleep**")
+    st.caption("How long and how well you slept.")
+    col1, col2 = st.columns(2)
+    with col1:
+        label, unit, mn, mx, default = SIGNAL_LABELS["sleep_hours"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_sleep_hours", help=SIGNAL_HELP.get("sleep_hours", ""))
+        values["sleep_hours"] = (val, unit)
+    with col2:
+        label, unit, mn, mx, default = SIGNAL_LABELS["sleep_quality"]
+        skip_sq = st.checkbox("Did not rate sleep quality today", key="skip_sleep_quality")
+        if not skip_sq:
+            val = st.slider(f"{label} ({unit})", min_value=int(mn), max_value=int(mx), value=3, key="input_sleep_quality", help=SIGNAL_HELP.get("sleep_quality", ""))
+            values["sleep_quality"] = (val, unit)
+
+    st.divider()
+
+    # ── ACTIVITY & STRESS ─────────────────────────────────────────────────────
+    st.markdown("**🏃 Activity & Wellbeing**")
+    st.caption("Physical activity, stress, and energy levels.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        label, unit, mn, mx, default = SIGNAL_LABELS["activity_mins"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=1.0, key="input_activity_mins", help=SIGNAL_HELP.get("activity_mins", ""))
+        values["activity_mins"] = (val, unit)
+    with col2:
+        label, unit, mn, mx, default = SIGNAL_LABELS["stress_level"]
+        skip_sl = st.checkbox("Skip stress rating today", key="skip_stress_level")
+        if not skip_sl:
+            val = st.slider(f"{label} ({unit})", min_value=int(mn), max_value=int(mx), value=3, key="input_stress_level", help=SIGNAL_HELP.get("stress_level", ""))
+            values["stress_level"] = (val, unit)
+    with col3:
+        label, unit, mn, mx, default = SIGNAL_LABELS["energy_level"]
+        skip_el = st.checkbox("Skip energy rating today", key="skip_energy_level")
+        if not skip_el:
+            val = st.slider(f"{label} ({unit})", min_value=int(mn), max_value=int(mx), value=3, key="input_energy_level", help=SIGNAL_HELP.get("energy_level", ""))
+            values["energy_level"] = (val, unit)
+
+    st.divider()
+
+    # ── OPTIONAL ──────────────────────────────────────────────────────────────
+    st.markdown("**🔬 Optional**")
+    st.caption("Fasting glucose — only log when you have an actual reading from a glucometer or lab result.")
+    col1, _ = st.columns([1, 2])
+    with col1:
+        label, unit, mn, mx, default = SIGNAL_LABELS["glucose"]
+        val = st.number_input(f"{label} ({unit})", min_value=mn, max_value=mx, value=None, step=0.1, key="input_glucose", help=SIGNAL_HELP.get("glucose", ""))
+        values["glucose"] = (val, unit)
+
+    st.divider()
+
+    # ── NOTES ─────────────────────────────────────────────────────────────────
+    st.markdown("**📝 Notes**")
     notes = st.text_area(
         "Notes (optional)",
         placeholder="e.g. High stress this week, skipped exercise, ate late most nights...",
-        height=80,
+        height=100,
         help=(
             "These notes are yours — they are never shared with anyone unless you choose to share them. "
             "Use them whenever something is worth capturing — a stressful period, a lifestyle change, "
             "an illness, a life event, or anything that might explain why your readings look the way they do. "
-            "The more honestly you describe what was going on, the better Solvra can understand "
-            "the story behind your numbers over time. "
-            "Useful context includes: emotional state (stressed, anxious, calm), sleep patterns (poor sleep, "
-            "irregular schedule), food and drink (eating late, skipping meals, alcohol), physical state "
-            "(illness, injury, new exercise routine), and life context (work pressure, relationship stress, travel). "
+            "Useful context: emotional state, sleep patterns, food and drink, physical state, life context. "
             "There is no judgment here. The more honest you are, the more useful your companion becomes."
         )
     )
     approximate = st.checkbox("Mark all as approximate", value=False,
         help="Check this if any of these values are estimates rather than direct measurements. Approximate readings are stored but given reduced weight in your baseline calculations.")
 
-    col_btn, col_msg = st.columns([1, 3])
+    st.divider()
+
+    col_btn, _ = st.columns([1, 3])
     with col_btn:
         if st.button("💾 Save Today's Data", use_container_width=True, type="primary"):
             ts = datetime.utcnow()
-            saved   = 0
-            alerts  = []
+            saved  = 0
+            alerts = []
 
             for sig, (val, unit) in values.items():
+                if val is None:
+                    continue  # Skip signals the user did not measure
                 try:
                     result = kernel.ingest_measurement(
                         user_id     = user_id,
@@ -459,7 +514,7 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
                     st.warning(f"Could not save {sig}: {e}")
 
             if saved > 0:
-                st.success(f"✓ {saved} measurements saved — {ts.strftime('%b %d, %Y %H:%M')} UTC")
+                st.success(f"✓ {saved} measurements saved — {ts.strftime('%b %d, %Y %H:%M')} UTC — Age {age}")
                 if alerts:
                     for a in alerts:
                         if a.severity == AlertSeverity.URGENT:
@@ -527,26 +582,9 @@ def render_baselines(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     if not any_baseline:
         st.info("No baselines yet. Log data for at least 2 weeks to see your personal baselines.")
 
-    # Context notes
-    context_notes = kernel.get_baseline_context_notes(user_id)
-    if context_notes:
-        st.markdown("---")
-        st.markdown("### 📋 Baseline Context")
-        st.caption("These are one-time informational notes. They are not alerts or diagnoses.")
-        for note in context_notes:
-            st.markdown(f"""
-            <div class="context-note">
-                <strong>{note.signal_name}</strong><br/>
-                {note.context_message}<br/>
-                <span style="font-size:0.8rem; color:#555">
-                    Source: {note.guideline_source}
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button(f"✓ Understood — {note.signal_name}", key=f"ack_note_{note.signal_id}"):
-                kernel.acknowledge_baseline_context_note(user_id, note.signal_id)
-                store.save_context_note(user_id, note)
-                st.rerun()
+
+    # Baseline context notes — reserved for Phase 2
+
 
 # ── SECTION 3: TRENDS ─────────────────────────────────────────────────────────
 
@@ -587,16 +625,14 @@ def render_trends(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
 
     fig = go.Figure()
 
-    # Raw readings
     fig.add_trace(go.Scatter(
         x=dates, y=values,
         mode="lines+markers",
         name="Your readings",
-        line=dict(color="#2E75B6", width=2),
+        line=dict(color="#2ECC71", width=2),
         marker=dict(size=6),
     ))
 
-    # Rolling 7-day average
     if len(values) >= 3:
         window = 7
         rolling = []
@@ -610,7 +646,6 @@ def render_trends(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
             line=dict(color="#1B3A5C", width=2, dash="dash"),
         ))
 
-    # Baseline reference lines
     if short_b:
         fig.add_hline(
             y=short_b.value,
@@ -645,8 +680,10 @@ def render_trends(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Findings summary for this signal
-    picture = kernel.get_signal_picture(user_id, selected)
+    try:
+        picture = kernel.get_signal_picture(user_id, selected)
+    except AttributeError:
+        picture = None
     if picture.findings:
         st.markdown("**Detected patterns for this signal**")
         for f in picture.findings:
@@ -654,14 +691,13 @@ def render_trends(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
             confidence_pct = int(f.confidence * 100)
             st.markdown(f"""
             <div style="background:#F5F5F5; border-radius:6px; padding:0.75rem;
-                        border-left:3px solid #2E75B6; margin-bottom:0.4rem;">
+                        border-left:3px solid #2ECC71; margin-bottom:0.4rem;">
                 {icon} <strong>{f.finding_type.value.replace('_', ' ').title()}</strong>
                 <span style="font-size:0.8rem; color:#888;"> — {confidence_pct}% confidence</span><br/>
                 <span style="font-size:0.9rem;">{f.description}</span>
             </div>
             """, unsafe_allow_html=True)
 
-    # Plain-language explanation
     if picture.explanation:
         with st.expander("📄 Full explanation"):
             st.markdown(f"**What changed**\n{picture.explanation.what_changed}")
@@ -680,44 +716,23 @@ def render_signals(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
 
     alerts = kernel.get_alerts(user_id, include_acknowledged=False)
 
-    if not alerts:
-        st.success("✓ No active alerts. Everything looks stable.")
-    else:
-        urgent  = [a for a in alerts if a.severity == AlertSeverity.URGENT]
-        monitor = [a for a in alerts if a.severity != AlertSeverity.URGENT]
+    if alerts:
+        st.markdown("### 🚨 Active Alerts")
+        for a in alerts:
+            css_class = "alert-urgent" if a.severity == AlertSeverity.URGENT else "alert-monitor"
+            icon = "🚨" if a.severity == AlertSeverity.URGENT else "⚠️"
+            st.markdown(f"""
+            <div class="{css_class}">
+                {icon} <strong>{a.title}</strong><br/>
+                {a.message}<br/><br/>
+                <strong>Recommendation:</strong> {a.safe_next_step}
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button(f"✓ Noted — {a.id[:8]}", key=f"ack_{a.id}"):
+                kernel.acknowledge_alert(user_id, a.id)
+                store.acknowledge_alert(user_id, a.id)
+                st.rerun()
 
-        if urgent:
-            st.markdown("### 🚨 Urgent Alerts")
-            st.caption("These require your attention before continuing.")
-            for a in urgent:
-                st.markdown(f"""
-                <div class="alert-urgent">
-                    <strong>{a.title}</strong><br/>
-                    {a.message}<br/><br/>
-                    <strong>Next step:</strong> {a.safe_next_step}
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"✓ I have read this — {a.id[:8]}", key=f"ack_{a.id}"):
-                    kernel.acknowledge_alert(user_id, a.id)
-                    store.acknowledge_alert(user_id, a.id)
-                    st.rerun()
-
-        if monitor:
-            st.markdown("### ⚠️ Monitor")
-            for a in monitor:
-                st.markdown(f"""
-                <div class="alert-monitor">
-                    <strong>{a.title}</strong><br/>
-                    {a.message}<br/><br/>
-                    <strong>Recommendation:</strong> {a.safe_next_step}
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"✓ Noted — {a.id[:8]}", key=f"ack_{a.id}"):
-                    kernel.acknowledge_alert(user_id, a.id)
-                    store.acknowledge_alert(user_id, a.id)
-                    st.rerun()
-
-    # Cross-signal overview
     st.markdown("---")
     st.markdown("### All Signals — Current State")
 
@@ -761,17 +776,40 @@ def render_twin(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     st.markdown('<p class="sub-header">Your personal health model — building from Day 1, growing more capable over time.</p>', unsafe_allow_html=True)
 
     load_measurements_into_kernel(kernel, store, user_id)
-    status = kernel.get_digital_twin_status(user_id)
 
-    phase_label, phase_icon = TWIN_PHASE_LABELS.get(
-        status.overall_phase, ("Phase 1 — Personal Record", "📋")
-    )
+    # Derive twin phase from measurement counts — no kernel method needed
+    all_counts = {}
+    for sig in SIGNAL_DEFINITIONS:
+        measurements = kernel.ingestion.get_measurements(user_id, signal_id=sig)
+        all_counts[sig] = len([m for m in measurements if not m.is_deleted])
+
+    total = sum(all_counts.values())
+    max_count = max(all_counts.values()) if all_counts else 0
+
+    # Determine overall phase from total readings
+    overall_phase = TWIN_PHASE_LABELS[0]
+    for phase in TWIN_PHASE_LABELS:
+        if total >= phase[2]:
+            overall_phase = phase
+
+    phase_label, phase_icon, _ = overall_phase
+
+    if total == 0:
+        maturity_message = "Log your first measurement to begin building your twin."
+    elif total < 14:
+        maturity_message = f"Your twin is in its earliest stage — {total} readings logged. Keep going. Baselines need at least 14 readings across 7 days to begin forming."
+    elif total < 30:
+        maturity_message = f"Your personal baselines are forming — {total} readings logged. Your twin is learning what is normal for you specifically."
+    elif total < 90:
+        maturity_message = f"Your trajectory model is building — {total} readings logged. Your twin is beginning to detect meaningful patterns over time."
+    else:
+        maturity_message = f"Your twin is maturing — {total} readings logged. The longer you log, the more personal and accurate your picture becomes."
 
     st.markdown(f"""
     <div class="twin-phase">
         <span style="font-size:1.5rem;">{phase_icon}</span>
         <strong style="font-size:1.2rem; color:#4A235A;"> {phase_label}</strong><br/><br/>
-        {status.maturity_message}
+        {maturity_message}
     </div>
     """, unsafe_allow_html=True)
 
@@ -780,19 +818,26 @@ def render_twin(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     st.caption("Each signal builds independently. Your twin advances as data accumulates.")
 
     cols = st.columns(2)
-    for i, (sig, phase) in enumerate(status.signals_in_phase.items()):
+    for i, sig in enumerate(SIGNAL_DEFINITIONS):
+        count = all_counts.get(sig, 0)
         label = SIGNAL_LABELS.get(sig, (sig,))[0]
-        p_label, p_icon = TWIN_PHASE_LABELS.get(phase, ("Phase 1", "📋"))
-        measurements = kernel.ingestion.get_measurements(user_id, signal_id=sig)
-        count = len([m for m in measurements if not m.is_deleted])
+
+        # Determine phase for this signal
+        sig_phase = TWIN_PHASE_LABELS[0]
+        for phase in TWIN_PHASE_LABELS:
+            if count >= phase[2]:
+                sig_phase = phase
+        p_label, p_icon, _ = sig_phase
+
+        phase_color = "#888888"
+        if count >= 30:
+            phase_color = "#1F6B3A"
+        elif count >= 14:
+            phase_color = "#2ECC71"
+        elif count >= 1:
+            phase_color = "#2E75B6"
 
         with cols[i % 2]:
-            phase_color = {
-                DigitalTwinPhase.PHASE_1_PERSONAL_RECORD:  "#888888",
-                DigitalTwinPhase.PHASE_2_BASELINE_MODEL:   "#2E75B6",
-                DigitalTwinPhase.PHASE_3_TRAJECTORY_MODEL: "#1F6B3A",
-            }.get(phase, "#888888")
-
             st.markdown(f"""
             <div style="padding:0.6rem; border-radius:6px; border-left:3px solid {phase_color};
                         background:#FAFAFA; margin-bottom:0.4rem;">
@@ -809,7 +854,7 @@ def render_twin(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     st.markdown("---")
     st.markdown("### What Your Twin Is")
     st.markdown("""
-    Your digital twin is not a feature — it is what Solvra is building from your first measurement.
+    Your digital twin is not a feature — it is what Shilu is building from your first measurement.
 
     It starts as a personal record. As data accumulates it builds your personal baselines.
     As baselines mature it detects trajectories and meaningful changes.
@@ -827,7 +872,7 @@ def render_twin(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
             st.json(export)
             st.caption("This is your complete portable health record. Download it, share it with your doctor, or transfer it.")
 
-# ── SECTION 6: HABITS ────────────────────────────────────────────────────────
+# ── SECTION 6: HABITS ─────────────────────────────────────────────────────────
 
 def render_habits(kernel, store, user_id: str):
     st.markdown('<p class="main-header">Habits</p>', unsafe_allow_html=True)
@@ -836,14 +881,13 @@ def render_habits(kernel, store, user_id: str):
     st.info(
         "🧩 **Why habits matter:** Numbers alone do not tell the full story. A resting heart rate of 80 "
         "means something different for someone who smokes and works night shifts versus someone who exercises "
-        "daily and sleeps well. Logging your habits gives Solvra the context to interpret your signals more "
+        "daily and sleeps well. Logging your habits gives Shilu the context to interpret your signals more "
         "accurately — and will power the correlation engine that connects your lifestyle choices to your "
         "health patterns over time."
     )
 
     tab1, tab2 = st.tabs(["📋 My Ongoing Habits", "🧪 Habit Experiments"])
 
-    # ── TAB 1: ONGOING HABITS ─────────────────────────────────────────────────
     with tab1:
         st.markdown("### Current Lifestyle Habits")
         st.caption("Log your baseline lifestyle. Update this whenever something changes. This is not judged — it is context.")
@@ -852,7 +896,7 @@ def render_habits(kernel, store, user_id: str):
             st.session_state.habits = {}
 
         col1, col2 = st.columns(2)
-        habit_keys = list(ONGOING_HABITS.keys())
+        habit_keys   = list(ONGOING_HABITS.keys())
         left_habits  = habit_keys[:len(habit_keys)//2 + 1]
         right_habits = habit_keys[len(habit_keys)//2 + 1:]
 
@@ -925,11 +969,10 @@ def render_habits(kernel, store, user_id: str):
         if st.button("💾 Save Habit Profile", type="primary"):
             st.success("✓ Habit profile saved. This context will inform your health picture going forward.")
 
-    # ── TAB 2: HABIT EXPERIMENTS ─────────────────────────────────────────────
     with tab2:
         st.markdown("### Habit Experiments")
         st.caption(
-            "Start or stop a habit and let Solvra track what happens to your signals before and after. "
+            "Start or stop a habit and let Shilu track what happens to your signals before and after. "
             "This is one of the most powerful features of longitudinal health tracking — seeing your own "
             "body's response to a specific change, in your own data."
         )
@@ -961,7 +1004,7 @@ def render_habits(kernel, store, user_id: str):
                 "Which signals do you expect this to affect?",
                 options=list(SIGNAL_LABELS.keys()),
                 format_func=lambda s: SIGNAL_LABELS.get(s, (s,))[0],
-                help="Select the signals you think this habit change might influence. Solvra will pay attention to these signals in the weeks after your start date."
+                help="Select the signals you think this habit change might influence. Shilu will pay attention to these signals in the weeks after your start date."
             )
             exp_notes = st.text_area(
                 "Why are you making this change?",
@@ -989,7 +1032,6 @@ def render_habits(kernel, store, user_id: str):
             else:
                 st.warning("Please describe the habit you are changing.")
 
-        # Show existing experiments
         if "experiments" in st.session_state and st.session_state.experiments:
             st.markdown("---")
             st.markdown("#### Active Experiments")
@@ -997,11 +1039,11 @@ def render_habits(kernel, store, user_id: str):
                 signals_str = ", ".join([SIGNAL_LABELS.get(s,(s,))[0] for s in exp.get("signals", [])])
                 st.markdown(f"""
                 <div style="background:#F0F6FF; border-radius:8px; padding:1rem;
-                            border-left:4px solid #2E75B6; margin-bottom:0.5rem;">
+                            border-left:4px solid #2ECC71; margin-bottom:0.5rem;">
                     <strong>🧪 {exp['name']}</strong>
                     <span style="float:right; color:#777; font-size:0.85rem;">Started {exp['start_date']}</span><br/>
                     <span style="font-size:0.85rem; color:#555;">{exp['type']} · {exp['category']}</span><br/>
-                    {f'<span style="font-size:0.85rem; color:#2E75B6;">Watching: {signals_str}</span><br/>' if signals_str else ""}
+                    {f'<span style="font-size:0.85rem; color:#2ECC71;">Watching: {signals_str}</span><br/>' if signals_str else ""}
                     {f'<span style="font-size:0.85rem; color:#777;">{exp["notes"]}</span>' if exp.get("notes") else ""}
                 </div>
                 """, unsafe_allow_html=True)
@@ -1009,38 +1051,96 @@ def render_habits(kernel, store, user_id: str):
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
+# ── ABOUT ─────────────────────────────────────────────────────────────────────
+
+def render_about():
+    st.markdown('<p class="main-header">About Shilu</p>', unsafe_allow_html=True)
+    st.divider()
+    st.markdown("""
+**Shilu** is a personal health intelligence system built on three non-negotiable pillars:
+
+**🔒 Personal Ownership** — Your health data belongs to you permanently. Portable, exportable,
+and yours regardless of what happens to any platform, provider, or insurer.
+
+**🛡️ Safety Before Autonomy** — The safety architecture is non-bypassable. When something in your
+data warrants attention, Shilu tells you. Always.
+
+**🔍 Trust Through Verifiable Integrity** — Every insight Shilu produces is traceable to the
+specific data that produced it. Full audit chain. No black boxes. No false certainty.
+
+---
+
+**What Shilu is not:**
+- Not a diagnostic tool
+- Not a replacement for clinical care
+- Not a population-average health tracker
+
+**What Shilu is:**
+- A longitudinal record of your personal health signals
+- A system that learns your normal — not the population's normal
+- A companion that watches continuously and speaks honestly
+
+---
+
+*Shilu is a proof of concept. Version 0.1 — Matthew Miller, Founder*
+    """)
+
 def main():
     kernel  = get_kernel()
     store   = get_store()
     user_id = get_user_id()
 
-    # Show welcome screen until user clicks through
     if not get_onboarded():
         render_welcome()
         return
 
-    # Load persisted data into kernel on each session start
     if "data_loaded" not in st.session_state:
         load_measurements_into_kernel(kernel, store, user_id)
         st.session_state.data_loaded = True
 
-    page = render_sidebar(kernel, store, user_id)
-
-    if page == "📥 Log Data":
-        render_log_data(kernel, store, user_id)
-    elif page == "📊 My Baselines":
-        render_baselines(kernel, store, user_id)
-    elif page == "📈 Trends":
-        render_trends(kernel, store, user_id)
-    elif page == "🔔 Signals & Alerts":
-        render_signals(kernel, store, user_id)
-    elif page == "🧬 My Twin":
-        render_twin(kernel, store, user_id)
-    elif page == "🌱 Habits":
-        render_habits(kernel, store, user_id)
-    elif page == "ℹ️ About Solvra":
+    # Sidebar — status and disclaimer only
+    st.sidebar.markdown("## 🌿 Shilu")
+    st.sidebar.markdown("*Personal Health Intelligence*")
+    st.sidebar.markdown("---")
+    if store.connected:
+        st.sidebar.success("✓ Connected to Supabase")
+    else:
+        st.sidebar.warning("⚡ Local mode — data not persisted\nAdd SUPABASE_URL and SUPABASE_KEY to enable persistence.")
+    st.sidebar.markdown("---")
+    st.sidebar.caption(
+        "Shilu is not a medical device. It does not diagnose, "
+        "treat, or replace clinical care. All outputs are for "
+        "personal awareness only."
+    )
+    if st.sidebar.button("← Back to Welcome"):
         st.session_state.onboarded = False
         st.rerun()
+
+    # Main navigation — tabs across the top
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "📥 Log Data",
+        "📊 My Baselines",
+        "📈 Trends",
+        "🔔 Signals & Alerts",
+        "🧬 My Twin",
+        "🌱 Habits",
+        "ℹ️ About Shilu"
+    ])
+
+    with tab1:
+        render_log_data(kernel, store, user_id)
+    with tab2:
+        render_baselines(kernel, store, user_id)
+    with tab3:
+        render_trends(kernel, store, user_id)
+    with tab4:
+        render_signals(kernel, store, user_id)
+    with tab5:
+        render_twin(kernel, store, user_id)
+    with tab6:
+        render_habits(kernel, store, user_id)
+    with tab7:
+        render_about()
 
 if __name__ == "__main__":
     main()
