@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 160" width="380" height="160">
+
+  <rect width="380" height="160" fill="#FFFFFF"/>
+
+  <!-- BASELINE = y=140 -->
+
+  <!-- s -->
+  <path d="M 74 85 C 72 78,64 74,53 74 C 40 74,31 81,31 90 C 31 99,40 103,53 107 C 66 111,75 115,75 126 C 75 135,66 140,53 140 C 40 140,31 133,28 126"
+    fill="none" stroke="#1A1A1A" stroke-width="16"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+
+  <!-- h -->
+  <line x1="96" y1="30" x2="96" y2="140" stroke="#1A1A1A" stroke-width="16" stroke-linecap="square"/>
+  <path d="M 96 96 C 96 85,104 77,117 76 C 130 75,139 83,139 96 L 139 140"
+    fill="none" stroke="#1A1A1A" stroke-width="16"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+
+  <!-- i dot emerald -->
+  <circle cx="162" cy="58" r="9" fill="#2ECC71"/>
+  <!-- i stem -->
+  <line x1="162" y1="82" x2="162" y2="140" stroke="#1A1A1A" stroke-width="16" stroke-linecap="square"/>
+
+  <!-- l -->
+  <path d="M 186 30 L 186 132 C 186 137, 191 140, 198 140"
+    fill="none" stroke="#1A1A1A" stroke-width="16"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+
+  <!-- u -->
+  <path d="M 218 82 L 218 108 C 218 126, 229 140, 242 140 C 255 140, 266 126, 266 108 L 266 82"
+    fill="none" stroke="#1A1A1A" stroke-width="16"
+    stroke-linecap="square" stroke-linejoin="miter"/>
+
+</svg>
