@@ -22,7 +22,8 @@ import os
 import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-
+from dotenv import load_dotenv
+load_dotenv()
 # Supabase client — installed via: pip install supabase
 try:
     from supabase import create_client, Client
@@ -30,7 +31,7 @@ try:
 except ImportError:
     SUPABASE_AVAILABLE = False
 
-from solvra_kernel.models.entities import (
+from shilu_kernel.models.entities import (
     Measurement, DerivedFeature, Finding, Alert,
     BaselineContextNote, AuditEvent,
     SourceType, QualityFlag, UncertaintyLevel,

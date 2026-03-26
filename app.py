@@ -146,7 +146,7 @@ SIGNAL_HELP = {
     "glucose":       "Fasting blood glucose in mg/dL. This requires either a home glucometer or a recent lab result from your doctor. Only log when you have an actual reading — do not estimate.",
     "body_temp":     "Your resting body temperature in Fahrenheit. Use an oral thermometer when you are not exercising or ill for your baseline. Temperature is most useful for detecting changes from your personal normal.",
     "spo2":          "Blood oxygen saturation — the percentage of your red blood cells carrying oxygen. Measured with a pulse oximeter, a small clip device that fits on your fingertip. Available at pharmacies, or captured by Apple Watch, Garmin, and similar wearables.",
-    "hrv":           "Heart Rate Variability — the variation in time between heartbeats in milliseconds. A higher HRV generally indicates better recovery and cardiovascular health. Requires a wearable device: Apple Watch, Garmin, Whoop, Oura Ring, or Polar chest strap.",
+    "hrv":           "Heart Rate Variability (RMSSD) — the variation in time between heartbeats, measured in milliseconds (ms). Log the RMSSD value specifically — not a percentage score or wellness index. A higher number generally indicates better recovery and cardiovascular health. Compatible apps and devices: Welltory (find RMSSD in the detailed reading), Apple Watch, Garmin, Whoop, Oura Ring, or Polar chest strap. Take readings at the same time each day, ideally first thing in the morning before getting up.",
 }
 
 ONGOING_HABITS = {
@@ -354,23 +354,42 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
         "logged when you have a recent lab result or glucometer reading."
     )
 
-    # Age dropdown
-    st.markdown("**👤 Your Age**")
-    age_col1, age_col2 = st.columns([1, 3])
-    with age_col1:
-        age = st.selectbox(
-            "Age",
-            options=list(range(18, 101)),
-            index=12,
-            label_visibility="collapsed",
-            help="Your age helps Shilu apply the correct reference ranges for your signals."
-        )
-    with age_col2:
-        st.markdown(
-            f"<div style='padding-top:8px; color:#555; font-size:0.9rem;'>"
-            f"Age <strong>{age}</strong> — reference ranges and safety thresholds will be calibrated for you.</div>",
-            unsafe_allow_html=True
-        )
+    # ── AGE — set once, locked in for the session ─────────────────────────────
+    if "profile_age" not in st.session_state:
+        # First time — show setup prompt
+        st.markdown("**👤 First, tell us your age**")
+        st.caption("You only need to set this once. It will be remembered for every log entry this session.")
+        age_setup_col1, age_setup_col2 = st.columns([1, 3])
+        with age_setup_col1:
+            age_input = st.selectbox(
+                "Your age",
+                options=list(range(18, 101)),
+                index=12,
+                label_visibility="collapsed",
+                help="Your age helps Shilu apply the correct population reference ranges for your signals."
+            )
+        with age_setup_col2:
+            st.markdown("<div style='padding-top:4px;'></div>", unsafe_allow_html=True)
+            if st.button("✓ Set My Age", type="primary"):
+                st.session_state.profile_age = age_input
+                st.rerun()
+        st.stop()  # Don't render the rest of the form until age is set
+
+    else:
+        # Age is locked in — show it with a small change link
+        age = st.session_state.profile_age
+        age_col1, age_col2 = st.columns([3, 1])
+        with age_col1:
+            st.markdown(
+                f"<div style='padding:6px 0; color:#555; font-size:0.9rem;'>"
+                f"👤 Age <strong style='color:#1B3A5C; font-size:1rem;'>{age}</strong> "
+                f"— reference ranges calibrated for you.</div>",
+                unsafe_allow_html=True
+            )
+        with age_col2:
+            if st.button("Change age", type="secondary", use_container_width=True):
+                del st.session_state.profile_age
+                st.rerun()
 
     st.divider()
     values = {}
@@ -514,14 +533,90 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
                     st.warning(f"Could not save {sig}: {e}")
 
             if saved > 0:
-                st.success(f"✓ {saved} measurements saved — {ts.strftime('%b %d, %Y %H:%M')} UTC — Age {age}")
+                # Store log entry in session history
+                if "log_history" not in st.session_state:
+                    st.session_state.log_history = []
+                st.session_state.log_history.append({
+                    "date": ts.strftime("%b %d, %Y"),
+                    "time": ts.strftime("%H:%M UTC"),
+                    "signals_logged": saved,
+                    "age": age,
+                })
+                st.success(f"✅ Saved — {saved} measurement{'s' if saved > 1 else ''} recorded on {ts.strftime('%b %d, %Y at %H:%M UTC')}")
                 if alerts:
                     for a in alerts:
                         if a.severity == AlertSeverity.URGENT:
                             st.error(f"🚨 **{a.title}**\n\n{a.message}\n\n**{a.safe_next_step}**")
                         else:
                             st.warning(f"⚠️ **{a.title}**\n\n{a.message}")
-                st.rerun()
+
+    # ── LOG HISTORY ───────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("**📋 Log History**")
+
+    log_history = st.session_state.get("log_history", [])
+
+    if not log_history:
+        st.caption("No entries logged this session. Your history will appear here after your first save.")
+    else:
+        # Collapse entries by date — count entries and total signals per date
+        from collections import defaultdict
+        date_summary = defaultdict(lambda: {"entries": 0, "signals": 0, "times": []})
+        for entry in log_history:
+            d = entry["date"]
+            date_summary[d]["entries"] += 1
+            date_summary[d]["signals"] += entry["signals_logged"]
+            date_summary[d]["times"].append(entry["time"])
+
+        st.caption(f"{len(log_history)} log session{'s' if len(log_history) != 1 else ''} this session · {sum(e['signals_logged'] for e in log_history)} total measurements recorded")
+
+        # Table header
+        col_date, col_sessions, col_signals = st.columns([2, 1, 1])
+        col_date.markdown("**Date**")
+        col_sessions.markdown("**Sessions**")
+        col_signals.markdown("**Measurements**")
+
+        st.markdown("<hr style='margin:4px 0 8px 0; border-color:#E0E0E0;'>", unsafe_allow_html=True)
+
+        for date, summary in sorted(date_summary.items(), reverse=True):
+            col_date, col_sessions, col_signals = st.columns([2, 1, 1])
+            col_date.markdown(f"📅 {date}")
+            sessions_label = f"{summary['entries']}" if summary['entries'] == 1 else f"{summary['entries']} entries"
+            col_sessions.markdown(sessions_label)
+            col_signals.markdown(f"{summary['signals']}")
+
+    # ── RESET DATA ────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("**🗑️ Reset All Data**")
+    st.caption(
+        "This clears all measurements, baselines, alerts, and log history from this session. "
+        "Since your data is stored in memory only, this is permanent for this session. "
+        "Use this to start fresh with clean data."
+    )
+
+    confirm_reset = st.checkbox("I understand this will permanently clear all my data for this session", key="confirm_reset")
+    if st.button("🗑️ Clear All Data and Start Fresh", disabled=not confirm_reset, type="secondary"):
+        # Clear kernel data
+        kernel = get_kernel()
+        if hasattr(kernel, 'ingestion') and hasattr(kernel.ingestion, '_store'):
+            kernel.ingestion._store.clear()
+        if hasattr(kernel, 'baseline') and hasattr(kernel.baseline, '_cache'):
+            kernel.baseline._cache.clear()
+
+        # Clear store data
+        store = get_store()
+        if hasattr(store, '_measurements'):
+            store._measurements.clear()
+        if hasattr(store, '_alerts'):
+            store._alerts.clear()
+
+        # Clear all relevant session state
+        for key in ["log_history", "experiments", "data_loaded", "confirm_reset", "profile_age"]:
+            if key in st.session_state:
+                del st.session_state[key]
+
+        st.success("✅ All data cleared. You are starting fresh.")
+        st.rerun()
 
 # ── SECTION 2: MY BASELINES ───────────────────────────────────────────────────
 
