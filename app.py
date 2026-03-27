@@ -113,6 +113,49 @@ def get_user_id() -> str:
         st.session_state.user_id = "demo_user"
     return st.session_state.user_id
 
+def load_log_history_from_supabase(store: SupabaseStore, user_id: str) -> list:
+    """Load log history from Supabase measurements table — persists across restarts."""
+    if not store.connected:
+        return []
+    try:
+        from collections import defaultdict
+        result = store.client.table("measurements") \
+            .select("timestamp, signal_id") \
+            .eq("user_id", user_id) \
+            .eq("is_deleted", False) \
+            .order("timestamp", desc=False) \
+            .execute()
+
+        if not result.data:
+            return []
+
+        # Group by date — count unique sessions (by hour) and signals per date
+        date_groups = defaultdict(lambda: {"sessions": set(), "signals": 0})
+        for row in result.data:
+            ts = row["timestamp"][:10]  # YYYY-MM-DD
+            hour = row["timestamp"][:13]  # YYYY-MM-DDTHH — proxy for session
+            date_groups[ts]["sessions"].add(hour)
+            date_groups[ts]["signals"] += 1
+
+        history = []
+        for date, data in sorted(date_groups.items()):
+            # Format date nicely
+            from datetime import datetime
+            try:
+                d = datetime.strptime(date, "%Y-%m-%d")
+                display_date = d.strftime("%b %d, %Y")
+            except Exception:
+                display_date = date
+            history.append({
+                "date": display_date,
+                "raw_date": date,
+                "sessions": len(data["sessions"]),
+                "signals": data["signals"],
+            })
+        return history
+    except Exception as e:
+        return []
+
 # ── SIGNAL DEFINITIONS ────────────────────────────────────────────────────────
 
 SIGNAL_LABELS = {
@@ -554,48 +597,67 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
     st.divider()
     st.markdown("**📋 Log History**")
 
-    log_history = st.session_state.get("log_history", [])
+    # Load from Supabase if connected — persists across restarts
+    if store.connected:
+        log_history = load_log_history_from_supabase(store, user_id)
+        if not log_history:
+            st.caption("No entries logged yet. Your history will appear here after your first save.")
+        else:
+            total_measurements = sum(e["signals"] for e in log_history)
+            total_days = len(log_history)
+            st.caption(f"{total_days} day{'s' if total_days != 1 else ''} logged · {total_measurements} total measurements recorded")
 
-    if not log_history:
-        st.caption("No entries logged this session. Your history will appear here after your first save.")
-    else:
-        # Collapse entries by date — count entries and total signals per date
-        from collections import defaultdict
-        date_summary = defaultdict(lambda: {"entries": 0, "signals": 0, "times": []})
-        for entry in log_history:
-            d = entry["date"]
-            date_summary[d]["entries"] += 1
-            date_summary[d]["signals"] += entry["signals_logged"]
-            date_summary[d]["times"].append(entry["time"])
-
-        st.caption(f"{len(log_history)} log session{'s' if len(log_history) != 1 else ''} this session · {sum(e['signals_logged'] for e in log_history)} total measurements recorded")
-
-        # Table header
-        col_date, col_sessions, col_signals = st.columns([2, 1, 1])
-        col_date.markdown("**Date**")
-        col_sessions.markdown("**Sessions**")
-        col_signals.markdown("**Measurements**")
-
-        st.markdown("<hr style='margin:4px 0 8px 0; border-color:#E0E0E0;'>", unsafe_allow_html=True)
-
-        for date, summary in sorted(date_summary.items(), reverse=True):
+            # Table header
             col_date, col_sessions, col_signals = st.columns([2, 1, 1])
-            col_date.markdown(f"📅 {date}")
-            sessions_label = f"{summary['entries']}" if summary['entries'] == 1 else f"{summary['entries']} entries"
-            col_sessions.markdown(sessions_label)
-            col_signals.markdown(f"{summary['signals']}")
+            col_date.markdown("**Date**")
+            col_sessions.markdown("**Sessions**")
+            col_signals.markdown("**Measurements**")
+
+            st.markdown("<hr style='margin:4px 0 8px 0; border-color:#E0E0E0;'>", unsafe_allow_html=True)
+
+            for entry in reversed(log_history):
+                col_date, col_sessions, col_signals = st.columns([2, 1, 1])
+                col_date.markdown(f"📅 {entry['date']}")
+                col_sessions.markdown(f"{entry['sessions']}")
+                col_signals.markdown(f"{entry['signals']}")
+    else:
+        # Fallback to session state when not connected
+        log_history_session = st.session_state.get("log_history", [])
+        if not log_history_session:
+            st.caption("No entries logged this session. Connect to Supabase for persistent history.")
+        else:
+            from collections import defaultdict
+            date_summary = defaultdict(lambda: {"entries": 0, "signals": 0})
+            for entry in log_history_session:
+                d = entry["date"]
+                date_summary[d]["entries"] += 1
+                date_summary[d]["signals"] += entry["signals_logged"]
+
+            for date, summary in sorted(date_summary.items(), reverse=True):
+                col_date, col_sessions, col_signals = st.columns([2, 1, 1])
+                col_date.markdown(f"📅 {date}")
+                col_sessions.markdown(f"{summary['entries']}")
+                col_signals.markdown(f"{summary['signals']}")
 
     # ── RESET DATA ────────────────────────────────────────────────────────────
     st.divider()
     st.markdown("**🗑️ Reset All Data**")
     st.caption(
-        "This clears all measurements, baselines, alerts, and log history from this session. "
-        "Since your data is stored in memory only, this is permanent for this session. "
-        "Use this to start fresh with clean data."
+        "This clears all measurements and baselines from Supabase permanently. "
+        "This cannot be undone. Use this only to start fresh with clean data."
     )
 
-    confirm_reset = st.checkbox("I understand this will permanently clear all my data for this session", key="confirm_reset")
+    confirm_reset = st.checkbox("I understand this will permanently delete all my saved data", key="confirm_reset")
     if st.button("🗑️ Clear All Data and Start Fresh", disabled=not confirm_reset, type="secondary"):
+        # Clear Supabase data if connected
+        if store.connected:
+            try:
+                store.client.table("measurements").delete().eq("user_id", user_id).execute()
+                store.client.table("alerts").delete().eq("user_id", user_id).execute()
+            except Exception as e:
+                st.error(f"Could not clear Supabase data: {e}")
+                st.stop()
+
         # Clear kernel data
         kernel = get_kernel()
         if hasattr(kernel, 'ingestion') and hasattr(kernel.ingestion, '_store'):
@@ -603,8 +665,7 @@ def render_log_data(kernel: SolvraKernel, store: SupabaseStore, user_id: str):
         if hasattr(kernel, 'baseline') and hasattr(kernel.baseline, '_cache'):
             kernel.baseline._cache.clear()
 
-        # Clear store data
-        store = get_store()
+        # Clear store in-memory data
         if hasattr(store, '_measurements'):
             store._measurements.clear()
         if hasattr(store, '_alerts'):
